@@ -48,6 +48,7 @@ import org.alfresco.model.RenditionModel;
 import org.alfresco.repo.content.ContentServicePolicies;
 import org.alfresco.repo.content.MimetypeMap;
 import org.alfresco.repo.content.metadata.AsynchronousExtractor;
+import org.alfresco.repo.domain.node.NodeDAO;
 import org.alfresco.repo.policy.BehaviourFilter;
 import org.alfresco.repo.policy.PolicyComponent;
 import org.alfresco.repo.rendition.RenditionPreventionRegistry;
@@ -112,6 +113,7 @@ public class RenditionService2Impl implements RenditionService2, InitializingBea
 
     private TransactionService transactionService;
     private NodeService nodeService;
+    private NodeDAO nodeDAO;
     private ContentService contentService;
     private RenditionPreventionRegistry renditionPreventionRegistry;
     private RenditionDefinitionRegistry2 renditionDefinitionRegistry2;
@@ -133,6 +135,11 @@ public class RenditionService2Impl implements RenditionService2, InitializingBea
     public void setNodeService(NodeService nodeService)
     {
         this.nodeService = nodeService;
+    }
+
+    public void setNodeDAO(NodeDAO nodeDAO)
+    {
+        this.nodeDAO = nodeDAO;
     }
 
     public void setContentService(ContentService contentService)
@@ -350,6 +357,22 @@ public class RenditionService2Impl implements RenditionService2, InitializingBea
 
                     if (sourceContentHashCode != SOURCE_HAS_NO_CONTENT)
                     {
+                        ContentData contentDataForTransform = DefaultTypeConverter.INSTANCE.convert(
+                                ContentData.class, nodeService.getProperty(sourceNodeRef, PROP_CONTENT));
+                        if (contentDataForTransform != null && contentDataForTransform.getSize() == 0)
+                        {
+                            // In a cluster with invalidating cache, the shared cache may hold stale
+                            // ContentData (size=0) from initial node creation because cache invalidation from the
+                            // uploading node hasn't propagated yet. Bypass the shared cache to read directly from DB.
+                            nodeDAO.setCheckNodeConsistency();
+                            contentDataForTransform = DefaultTypeConverter.INSTANCE.convert(
+                                    ContentData.class, nodeService.getProperty(sourceNodeRef, PROP_CONTENT));
+                            if (contentDataForTransform != null && contentDataForTransform.getSize() > 0)
+                            {
+                                sourceContentHashCode = getSourceContentHashCode(sourceNodeRef);
+                                renderOrTransform.throwIllegalStateExceptionIfAlreadyDone(sourceContentHashCode);
+                            }
+                        }
                         transformClient.transform(sourceNodeRef, renditionDefinition, user, sourceContentHashCode);
                     }
                     else
